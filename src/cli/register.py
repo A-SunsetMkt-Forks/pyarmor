@@ -31,6 +31,15 @@ from . import logger, CliError
 # All supported machine flags for group license: [11, 26)
 MACHFLAGS = 22, 21, 18, 20, 16, 11
 
+# Upgrade notes for Pyarmor 9
+URL_UPGRADE_V9 = 'https://github.com/dashingsoft/pyarmor/issues/1958'
+
+# Template for license info
+LICENSE_INFO_TEMPLATE = '''$advanced
+
+$notes
+'''
+
 
 def parse_token(data):
     from struct import unpack
@@ -67,15 +76,23 @@ def parse_token(data):
         except Exception as e:
             logger.warning('bad token: %s', str(e))
 
-        return {
-            'token': 0,
-            'rev': 0,
-            'features': 0,
-            'licno': 'pyarmor-vax-000000',
-            'regname': '',
-            'product': 'non-profits',
-            'note': 'This is trial license'
-        }
+    return {
+        'token': 0,
+        'rev': 0,
+        'features': 0,
+        'licno': 'pyarmor-vax-000000',
+        'regname': '',
+        'product': 'non-profits',
+        'note': 'This is trial license'
+    }
+
+
+def show_help_page(prompt, url):
+    choice = input('\n'.join(prompt)).lower()[:1]
+    if choice == 'h':
+        import webbrowser
+        webbrowser.open(url)
+    return choice
 
 
 def check_license_version(ctx, silent=False):
@@ -84,11 +101,24 @@ def check_license_version(ctx, silent=False):
     token = licinfo.get('token', 0)
     features = licinfo.get('features', 0)
     if rev == 1 and features > 0 and token > 0:
-        logger.warning('this license is not for Pyarmor 9')
+        logger.warning('this license is not ready for Pyarmor 9')
         if silent:
             return False
 
-        url = 'https://github.com/dashingsoft/pyarmor/issues/1958'
+        # Group License
+        if features == 15:
+            prompt = (
+                '',
+                'Pyarmor 9 has some changes on license policy',
+                'This group license is still available',
+                'But it need request new device regfile as before',
+                'Press "h" to check Pyarmor 9 Upgrade Notes',
+                '',
+                'Help (h), Quit (q): '
+            )
+            show_help_page(prompt, URL_UPGRADE_V9)
+            raise SystemExit('Quit')
+
         prompt = (
             '',
             'Pyarmor 9 has big change on CI/CD pipeline',
@@ -98,11 +128,7 @@ def check_license_version(ctx, silent=False):
             '',
             'Continue (c), Help (h), Quit (q): '
         )
-        choice = input('\n'.join(prompt)).lower()[:1]
-        if choice == 'h':
-            import webbrowser
-            webbrowser.open(url)
-        if not choice == 'c':
+        if not show_help_page(prompt, URL_UPGRADE_V9) == 'c':
             raise SystemExit('Quit')
 
 
@@ -248,17 +274,16 @@ class Register(object):
             if lictp == 'C' else ''
         )
 
+        regname = regname.encode('utf-8')
+        product = product.encode('utf-8')
+        notes = notes.encode('utf-8')
         data = pack('<II8x20s28xBB2sB2sB2s', token,
                     rev | features << 8,
                     licno.encode('utf-8'),
                     0,
                     len(regname), b'%s',
                     len(product), b'%s',
-                    len(notes), b'%s') % (
-                        regname.encode('utf-8'),
-                        product.encode('utf-8'),
-                        notes.encode('utf-8'),
-                    )
+                    len(notes), b'%s') % (regname, product, notes)
         return b64encode(data) + b' *=='
 
     def register_regfile(self, regfile, clean=True):
@@ -280,35 +305,30 @@ class Register(object):
                 logger.debug('extracting %s', name)
                 self.ctx.save_token(f.read(name))
             elif 'group.info' in namelist:
-                docurl = 'http://pyarmor.readthedocs.io/en/stable'
-                logger.info('refer to %s/how-to/register.html'
-                            '#using-group-license', docurl)
-                raise CliError('wrong usage for group license')
+                logger.info('this file is only used to '
+                            'request device regfile:\n\n'
+                            '\tpyarmor reg -g 1 %s\n', regfile)
+                raise CliError('wrong usage for Group License')
             elif 'reg.info' in namelist:
-                info = json_loads(f.read('reg.info'), encoding='utf-8')
+                data = f.read('reg.info')
+                info = json_loads(data)
+                if info.get('type', '') == 'C':
+                    logger.info('this file is only used to '
+                                'request ci regfile:\n\n'
+                                '\tpyarmor reg -C %s\n', regfile)
+                    raise CliError('wrong usage for CI License')
                 self.ctx.save_token(self._init_token(info))
             else:
-                self.show_upgrade_notes()
-
-    def show_upgrade_notes(self):
-        if os.getenv('LANG', '').startswith('zh_CN'):
-            lang = 'zh', '#pyarmor'
-        else:
-            lang = 'en', '#what-need-to-do-after-upgrading-pyarmor'
-        docurl = ('https://pyarmor.readthedocs.io/'
-                  '%s/v9.0/how-to/register.html%s' % lang)
-        prompt = (
-            '',
-            'Pyarmor 9 has big change on CI/CD pipeline',
-            'Press "h" to check Pyarmor 9.0 Upgrade Notes',
-            '',
-            'Help (h), Quit (q): '
-        )
-        choice = input('\n'.join(prompt)).lower()[:1]
-        if choice == 'h':
-            import webbrowser
-            webbrowser.open(docurl)
-        raise CliError('this license is not ready for Pyarmor 9')
+                logger.error('this license is not ready for Pyarmor 9')
+                prompt = (
+                    '',
+                    'Pyarmor 9 has big change on CI/CD pipeline',
+                    'Press "h" to check Pyarmor 9.0 Upgrade Notes',
+                    '',
+                    'Help (h), Quit (q): '
+                )
+                show_help_page(prompt, URL_UPGRADE_V9)
+                raise SystemExit()
 
     def _get_docker_hostname(self):
         try:
@@ -395,11 +415,6 @@ class Register(object):
                     'this group license is not for this machine')
 
     def __str__(self):
-        '''$advanced
-
-$notes
-'''
-
         info = self.license_info
         lictype = self._license_type(info)
 
@@ -434,7 +449,7 @@ $notes
         if self.notes:
             self.notes.insert(0, 'Notes')
 
-        lines.append(Template(self.__str__.__doc__).substitute(
+        lines.append(Template(LICENSE_INFO_TEMPLATE).substitute(
             advanced='\n'.join(advanced),
             notes='\n'.join(self.notes),
         ))
@@ -625,9 +640,11 @@ class WebRegister(Register):
         logger.info('this license has been activated sucessfully')
 
         notes = [
-            '* Please backup regfile "%s" carefully, and '
+            '* Please backup "%s", but do not use it to '
+            'register Pyarmor' % os.path.basename(keyfile),
+            '* Please backup regfile "%s", and '
             'use this file for next any registration' % regfile,
-            '* Do not use "%s" again' % os.path.basename(keyfile),
+            '* Do not use this file in docker and CI/CD pipeline',
         ]
 
         if group:
@@ -637,8 +654,8 @@ class WebRegister(Register):
             return
 
         notes.append('')
-        notes.append('Next register Pyarmor in any device by this command'
-                     '(except docker and CI/CD pipeline):')
+        notes.append('Next register Pyarmor in build device by this command:')
+
         notes.append('\tpyarmor reg %s' % regfile)
         notes.append('')
         logger.info('\n\nImport Notes:\n%s\n', '\n'.join(notes))
@@ -670,14 +687,21 @@ class WebRegister(Register):
                     f.write(data[n:])
                 self._write_reg_info(filename, data[i:n])
             else:
-                # TBD: it should not happened
-                logger.warning('no REGINFO found')
+                # Only for request group token
+                logger.debug('no REGINFO found')
                 with open(filename, 'wb') as f:
                     f.write(data)
             return filename
 
         elif res:
-            raise CliError(res.read().decode('utf-8'))
+            data = res.read()
+            logger.debug('server return(%d): %s', res.code, data)
+            try:
+                msg = data.decode('utf-8')
+            except Exception as e:
+                logger.debug('decode server data error "%s"', e)
+                msg = data
+            raise CliError(msg)
 
         raise CliError('no response from license server')
 
@@ -693,7 +717,7 @@ class WebRegister(Register):
         with ZipFile(filename, 'a') as f:
             f.writestr('group.info', data)
 
-    def register_group_device(self, regfile, devid, rev=1):
+    def register_group_device(self, regfile, devid, rev=2):
         from zipfile import ZipFile
         devfile = self.ctx.group_device_file(devid)
         logger.info('register device file "%s"', devfile)
@@ -762,7 +786,7 @@ class WebRegister(Register):
         with ZipFile(filename, 'a') as f:
             f.writestr('ci.token', data)
 
-    def register_ci_license(self, regfile, rev=2):
+    def request_ci_regfile(self, regfile, rev=2):
         logger.info('request ci regfile by "%s"', regfile)
         from zipfile import ZipFile
 
@@ -809,4 +833,12 @@ class WebRegister(Register):
                     dst.writestr(x, src.read(x))
                 dst.writestr('ci.token', token)
 
-        logger.info('generate ci regfile %s successfully', cifile)
+        logger.info('generate CI regfile "%s" successfully', cifile)
+
+        ver = '.'.join([str(x) for x in self.ctx.version])
+        logger.info('\n\nCheck CI license in local machine by:\n'
+                    '\n\tpyarmor reg %s\n\n'
+                    'Register Pyarmor in CI/CD pipeline by:\n'
+                    '\n\tpip install pyarmor==%s\n'
+                    '\tpyarmor reg %s\n',
+                    cifile, ver, cifile)

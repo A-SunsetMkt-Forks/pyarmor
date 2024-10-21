@@ -313,7 +313,7 @@ def cmd_reg(ctx, args):
     elif args.ci:
         regsvr = WebRegister(ctx)
         regsvr.check_request_interval()
-        regsvr.register_ci_license(regfile)
+        regsvr.request_ci_regfile(regfile)
 
     elif regfile.endswith('.zip'):
         reg = Register(ctx)
@@ -729,8 +729,9 @@ def main_entry(argv):
     parser = main_parser()
     args = parser.parse_args(argv)
 
-    if sys.version_info[0] == 2 or sys.version_info[1] < 7:
-        raise CliError('only Python 3.7+ is supported now')
+    x, y = sys.version_info[:2]
+    if not (x == 3 and y > 6 and y < 13):
+        raise CliError('Python %s.%s is not supported' % (x, y))
 
     ctx = Context(*get_home_paths(args))
 
